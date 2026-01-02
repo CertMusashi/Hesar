@@ -1,12 +1,11 @@
 # Hesar - Secure Message Encryption
 
 <div align="center">
-
-![Hesar Logo](logo.png)
+<img src="logo.png" alt="Logo" width="200" height="200">
 
 **A secure Android application for encrypting and decrypting messages with AES-256-GCM**
 
-[![Build and Release APK](https://github.com/CertMusashi/Dapp/actions/workflows/release.yml/badge.svg)](https://github.com/CertMusashi/Dapp/actions/workflows/release.yml)
+[![Build and Release APK](https://github.com/CertMusashi/Hesar/actions/workflows/release.yml/badge.svg)](https://github.com/CertMusashi/Hesar/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Flutter](https://img.shields.io/badge/Flutter-3.24.5-02569B?logo=flutter)](https://flutter.dev)
 [![Android](https://img.shields.io/badge/Android-21%2B-3DDC84?logo=android)](https://www.android.com)
