@@ -36,7 +36,7 @@
 - 🔐 **Military-Grade Encryption**: AES-256-GCM encryption with PBKDF2 key derivation
 - 🔑 **Key Management**: Generate, save, and share encryption keys securely
 - 📱 **Modern UI**: Beautiful dark-themed interface with Persian language support
-- 🌐 **Persian Output Encoding**: Converts encrypted data to Persian characters for easy sharing
+- 🌐 **Multi-language Output Encoding**: Converts encrypted data to characters from Persian, Korean, Chinese, or Russian scripts — or outputs raw hex — for easy and discreet sharing
 - 💾 **Persistent Storage**: Automatically saves your encryption key for convenience
 - 🚀 **Optimized Performance**: Split APK builds for minimal app size
 - 🔄 **Real-time Encryption**: Instant encryption/decryption as you type
@@ -158,6 +158,20 @@ Hesar uses **AES-256-GCM** (Advanced Encryption Standard with Galois/Counter Mod
 - **Save**: Stores the key locally for future use
 - **Copy**: Copies the key to clipboard for sharing
 
+### Output Language
+
+In the **Settings** tab, choose how encrypted output is displayed:
+
+| Language | Script |
+|----------|--------|
+| فارسی (Persian) | Persian characters |
+| انگلیسی (English) | Raw hex |
+| کره‌ای (Korean) | Hangul syllables |
+| چینی (Chinese) | CJK characters |
+| روسی (Russian) | Cyrillic characters |
+
+Both sender and receiver must use the same output language setting.
+
 ---
 
 ## 🛠 Building from Source
@@ -213,7 +227,7 @@ android/
 
 ```
 User Input → PBKDF2 Key Derivation → AES-256-GCM Encryption
-          → Base64 Encoding → Persian Character Mapping → Output
+          → Hex Encoding → Language Character Mapping → Output
 ```
 
 ---

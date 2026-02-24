@@ -65,7 +65,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   final TextEditingController _keyController = TextEditingController();
   String _encodeOutput = '';
   String _decodeOutput = '';
-  bool _useBase64 = true;
   String _outputLanguage = 'fa'; // fa, en, ko, zh, ru
 
   // Obfuscated salt computation constants
@@ -119,14 +118,12 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _useBase64 = prefs.getBool('use_base64') ?? true;
       _outputLanguage = prefs.getString('output_language') ?? 'fa';
     });
   }
 
   Future<void> _saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('use_base64', _useBase64);
     await prefs.setString('output_language', _outputLanguage);
   }
 
@@ -224,14 +221,9 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       // Combine IV + encrypted data for transmission
       final combined = Uint8List.fromList([...iv.bytes, ...encrypted.bytes]);
       
-      if (!_useBase64) {
-        // Return as hex string when base64 is disabled
-        return combined.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-      }
-
-      // Convert to base64, then to selected language characters for easy sharing
-      final base64Str = base64.encode(combined);
-      return _encodeToLanguage(base64Str);
+      // Convert bytes directly to hex, then map to selected language characters
+      final hexStr = combined.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+      return _encodeToLanguage(hexStr);
     } catch (e) {
       throw Exception('Encryption failed: $e');
     }
@@ -243,19 +235,13 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       final keyBytes = _deriveKey(key);
       final encryptKey = encrypt.Key(keyBytes);
       
-      Uint8List combined;
-      if (!_useBase64) {
-        // Decode from hex string
-        if (encryptedText.length % 2 != 0) throw Exception('Invalid hex data');
-        combined = Uint8List.fromList(List.generate(
-          encryptedText.length ~/ 2,
-          (i) => int.parse(encryptedText.substring(i * 2, i * 2 + 2), radix: 16),
-        ));
-      } else {
-        // Convert language chars back to base64
-        final base64Str = _decodeFromLanguage(encryptedText);
-        combined = base64.decode(base64Str);
-      }
+      // Convert language chars back to hex, then decode hex to bytes
+      final hexStr = _decodeFromLanguage(encryptedText);
+      if (hexStr.length % 2 != 0) throw Exception('Invalid hex data');
+      final combined = Uint8List.fromList(List.generate(
+        hexStr.length ~/ 2,
+        (i) => int.parse(hexStr.substring(i * 2, i * 2 + 2), radix: 16),
+      ));
       
       // Extract IV (first 16 bytes) and encrypted data
       if (combined.length < 32) { // Minimum: 16 bytes IV + 16 bytes GCM tag
@@ -300,99 +286,64 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     return derivator.process(Uint8List.fromList(utf8.encode(userKey)));
   }
 
-  // Character mapping similar to the reference v2ray app
-  final Map<String, String> _latinToPersianMap = {
-    'a': 'ش', 'b': 'ل', 'c': 'ض', 'd': 'ب', 'e': 'ع', 'f': 'گ', 'g': 'و', 'h': 'ظ',
-    'i': 'س', 'j': 'ژ', 'k': 'ک', 'l': 'م', 'm': 'ن', 'n': 'پ', 'o': 'غ', 'p': 'ح',
-    'q': 'ز', 'r': 'ط', 's': 'ر', 't': 'ق', 'u': 'ث', 'v': 'ف', 'w': 'ی', 'x': 'د',
-    'y': 'ذ', 'z': 'خ',
-    'A': 'هش', 'B': 'هل', 'C': 'هض', 'D': 'هب', 'E': 'هع', 'F': 'هگ', 'G': 'هو', 'H': 'هظ',
-    'I': 'هس', 'J': 'هژ', 'K': 'هک', 'L': 'هم', 'M': 'هن', 'N': 'هپ', 'O': 'هغ', 'P': 'هح',
-    'Q': 'هز', 'R': 'هط', 'S': 'هر', 'T': 'هق', 'U': 'هث', 'V': 'هف', 'W': 'هی', 'X': 'هد',
-    'Y': 'هذ', 'Z': 'هخ',
-    '0': '۰', '1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷',
-    '8': '۸', '9': '۹',
-    '+': 'ا', '/': 'ت', '=': 'چ',
+  // Hex character maps: each of the 16 hex digits (0-9, a-f) maps to a language character
+  final Map<String, String> _hexToPersianMap = {
+    '0': '۰', '1': '۱', '2': '۲', '3': '۳', '4': '۴',
+    '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹',
+    'a': 'ش', 'b': 'ل', 'c': 'ض', 'd': 'ب', 'e': 'ع', 'f': 'گ',
   };
 
-  // Korean character map (Hangul syllables, one per base64 char)
-  final Map<String, String> _latinToKoreanMap = {
-    'A': '가', 'B': '나', 'C': '다', 'D': '라', 'E': '마', 'F': '바', 'G': '사', 'H': '아',
-    'I': '자', 'J': '차', 'K': '카', 'L': '타', 'M': '파', 'N': '하', 'O': '갈', 'P': '날',
-    'Q': '달', 'R': '랄', 'S': '말', 'T': '발', 'U': '살', 'V': '알', 'W': '잘', 'X': '찰',
-    'Y': '칼', 'Z': '탈',
-    'a': '팔', 'b': '할', 'c': '감', 'd': '남', 'e': '담', 'f': '람', 'g': '맘', 'h': '밤',
-    'i': '삼', 'j': '암', 'k': '잠', 'l': '참', 'm': '캄', 'n': '탐', 'o': '팜', 'p': '함',
-    'q': '강', 'r': '낭', 's': '당', 't': '랑', 'u': '망', 'v': '방', 'w': '상', 'x': '앙',
-    'y': '장', 'z': '창',
-    '0': '캉', '1': '탕', '2': '팡', '3': '항', '4': '개', '5': '내', '6': '대', '7': '래',
-    '8': '매', '9': '배',
-    '+': '새', '/': '애', '=': '재',
+  final Map<String, String> _hexToKoreanMap = {
+    '0': '가', '1': '나', '2': '다', '3': '라', '4': '마',
+    '5': '바', '6': '사', '7': '아', '8': '자', '9': '차',
+    'a': '카', 'b': '타', 'c': '파', 'd': '하', 'e': '갈', 'f': '날',
   };
 
-  // Chinese character map (common CJK characters, one per base64 char)
-  final Map<String, String> _latinToChineseMap = {
-    'A': '的', 'B': '一', 'C': '是', 'D': '不', 'E': '了', 'F': '人', 'G': '我', 'H': '在',
-    'I': '有', 'J': '他', 'K': '这', 'L': '中', 'M': '大', 'N': '来', 'O': '上', 'P': '国',
-    'Q': '个', 'R': '到', 'S': '说', 'T': '们', 'U': '为', 'V': '子', 'W': '和', 'X': '你',
-    'Y': '地', 'Z': '出',
-    'a': '道', 'b': '也', 'c': '时', 'd': '年', 'e': '得', 'f': '就', 'g': '那', 'h': '要',
-    'i': '下', 'j': '以', 'k': '生', 'l': '会', 'm': '可', 'n': '自', 'o': '着', 'p': '去',
-    'q': '之', 'r': '过', 's': '家', 't': '学', 'u': '对', 'v': '里', 'w': '后', 'x': '行',
-    'y': '多', 'z': '法',
-    '0': '所', '1': '发', '2': '事', '3': '前', '4': '本', '5': '见', '6': '经', '7': '想',
-    '8': '当', '9': '二',
-    '+': '三', '/': '做', '=': '又',
+  final Map<String, String> _hexToChineseMap = {
+    '0': '的', '1': '一', '2': '是', '3': '不', '4': '了',
+    '5': '人', '6': '我', '7': '在', '8': '有', '9': '他',
+    'a': '这', 'b': '中', 'c': '大', 'd': '来', 'e': '上', 'f': '国',
   };
 
-  // Russian character map (Cyrillic, one per base64 char)
-  final Map<String, String> _latinToRussianMap = {
-    'A': 'А', 'B': 'Б', 'C': 'В', 'D': 'Г', 'E': 'Д', 'F': 'Е', 'G': 'Ё', 'H': 'Ж',
-    'I': 'З', 'J': 'И', 'K': 'Й', 'L': 'К', 'M': 'Л', 'N': 'М', 'O': 'Н', 'P': 'О',
-    'Q': 'П', 'R': 'Р', 'S': 'С', 'T': 'Т', 'U': 'У', 'V': 'Ф', 'W': 'Х', 'X': 'Ц',
-    'Y': 'Ч', 'Z': 'Ш',
-    'a': 'Щ', 'b': 'Ъ', 'c': 'Ы', 'd': 'Ь', 'e': 'Э', 'f': 'Ю', 'g': 'Я', 'h': 'а',
-    'i': 'б', 'j': 'в', 'k': 'г', 'l': 'д', 'm': 'е', 'n': 'ё', 'o': 'ж', 'p': 'з',
-    'q': 'и', 'r': 'й', 's': 'к', 't': 'л', 'u': 'м', 'v': 'н', 'w': 'о', 'x': 'п',
-    'y': 'р', 'z': 'с',
-    '0': 'т', '1': 'у', '2': 'ф', '3': 'х', '4': 'ц', '5': 'ч', '6': 'ш', '7': 'щ',
-    '8': 'ъ', '9': 'ы',
-    '+': 'ь', '/': 'э', '=': 'ю',
+  final Map<String, String> _hexToRussianMap = {
+    '0': 'А', '1': 'Б', '2': 'В', '3': 'Г', '4': 'Д',
+    '5': 'Е', '6': 'Ё', '7': 'Ж', '8': 'З', '9': 'И',
+    'a': 'Й', 'b': 'К', 'c': 'Л', 'd': 'М', 'e': 'Н', 'f': 'О',
   };
 
-  late final Map<String, String> _persianToLatinMap = {
-    for (var entry in _latinToPersianMap.entries) entry.value: entry.key,
+  late final Map<String, String> _persianToHexMap = {
+    for (var entry in _hexToPersianMap.entries) entry.value: entry.key,
   };
 
-  late final Map<String, String> _koreanToLatinMap = {
-    for (var entry in _latinToKoreanMap.entries) entry.value: entry.key,
+  late final Map<String, String> _koreanToHexMap = {
+    for (var entry in _hexToKoreanMap.entries) entry.value: entry.key,
   };
 
-  late final Map<String, String> _chineseToLatinMap = {
-    for (var entry in _latinToChineseMap.entries) entry.value: entry.key,
+  late final Map<String, String> _chineseToHexMap = {
+    for (var entry in _hexToChineseMap.entries) entry.value: entry.key,
   };
 
-  late final Map<String, String> _russianToLatinMap = {
-    for (var entry in _latinToRussianMap.entries) entry.value: entry.key,
+  late final Map<String, String> _russianToHexMap = {
+    for (var entry in _hexToRussianMap.entries) entry.value: entry.key,
   };
 
-  String _encodeToLanguage(String base64Str) {
+  String _encodeToLanguage(String hexStr) {
     switch (_outputLanguage) {
-      case 'fa': return _latinToPersian(base64Str);
-      case 'ko': return _mapChars(base64Str, _latinToKoreanMap);
-      case 'zh': return _mapChars(base64Str, _latinToChineseMap);
-      case 'ru': return _mapChars(base64Str, _latinToRussianMap);
-      default: return base64Str; // 'en': keep as base64
+      case 'fa': return _mapChars(hexStr, _hexToPersianMap);
+      case 'ko': return _mapChars(hexStr, _hexToKoreanMap);
+      case 'zh': return _mapChars(hexStr, _hexToChineseMap);
+      case 'ru': return _mapChars(hexStr, _hexToRussianMap);
+      default: return hexStr; // 'en': keep as hex
     }
   }
 
   String _decodeFromLanguage(String encodedStr) {
     switch (_outputLanguage) {
-      case 'fa': return _persianToLatin(encodedStr);
-      case 'ko': return _reverseMapChars(encodedStr, _koreanToLatinMap);
-      case 'zh': return _reverseMapChars(encodedStr, _chineseToLatinMap);
-      case 'ru': return _reverseMapChars(encodedStr, _russianToLatinMap);
-      default: return encodedStr; // 'en': keep as base64
+      case 'fa': return _reverseMapChars(encodedStr, _persianToHexMap);
+      case 'ko': return _reverseMapChars(encodedStr, _koreanToHexMap);
+      case 'zh': return _reverseMapChars(encodedStr, _chineseToHexMap);
+      case 'ru': return _reverseMapChars(encodedStr, _russianToHexMap);
+      default: return encodedStr; // 'en': keep as hex
     }
   }
 
@@ -408,36 +359,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     final result = StringBuffer();
     for (var i = 0; i < input.length; i++) {
       result.write(reverseMap[input[i]] ?? input[i]);
-    }
-    return result.toString();
-  }
-
-  String _latinToPersian(String latin) {
-    final result = StringBuffer();
-    for (var i = 0; i < latin.length; i++) {
-      final char = latin[i];
-      result.write(_latinToPersianMap[char] ?? char);
-    }
-    return result.toString();
-  }
-
-  String _persianToLatin(String persian) {
-    final result = StringBuffer();
-    var i = 0;
-    while (i < persian.length) {
-      // Try to match 2-character sequence first (for capital letters)
-      if (i + 1 < persian.length) {
-        final twoChar = persian.substring(i, i + 2);
-        if (_persianToLatinMap.containsKey(twoChar)) {
-          result.write(_persianToLatinMap[twoChar]);
-          i += 2;
-          continue;
-        }
-      }
-      // Try single character
-      final oneChar = persian[i];
-      result.write(_persianToLatinMap[oneChar] ?? oneChar);
-      i++;
     }
     return result.toString();
   }
@@ -757,34 +678,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
               ),
             ),
             const SizedBox(height: 24),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1c1c1c),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: const Color(0xFF333333)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'استفاده از Base64',
-                    style: TextStyle(color: Colors.white, fontSize: 16),
-                  ),
-                  Switch(
-                    value: _useBase64,
-                    onChanged: (value) {
-                      setState(() {
-                        _useBase64 = value;
-                      });
-                      _saveSettings();
-                    },
-                    activeColor: Colors.white,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
             const Text(
               'زبان خروجی',
               style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
@@ -802,29 +695,19 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     title: Text(lang.$2, style: const TextStyle(color: Colors.white)),
                     value: lang.$1,
                     groupValue: _outputLanguage,
-                    onChanged: _useBase64
-                        ? (value) {
-                            if (value != null) {
-                              setState(() {
-                                _outputLanguage = value;
-                              });
-                              _saveSettings();
-                            }
-                          }
-                        : null,
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() {
+                          _outputLanguage = value;
+                        });
+                        _saveSettings();
+                      }
+                    },
                     activeColor: Colors.white,
                   );
                 }).toList(),
               ),
             ),
-            if (!_useBase64)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text(
-                  'انتخاب زبان خروجی فقط هنگام فعال بودن Base64 امکان‌پذیر است',
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-              ),
           ],
         ),
       ),
