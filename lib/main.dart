@@ -65,6 +65,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   final TextEditingController _keyController = TextEditingController();
   String _encodeOutput = '';
   String _decodeOutput = '';
+  bool _useBase64 = true;
+  String _outputLanguage = 'fa'; // fa, en, ko, zh, ru
 
   // Obfuscated salt computation constants
   static const int _saltBase = 72;
@@ -73,9 +75,9 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _loadSavedKey();
-    _encodeInputController.addListener(_onEncodeInputChanged);
+    _loadSettings();
     _decodeInputController.addListener(_onDecodeInputChanged);
     _keyController.addListener(_onKeyChanged);
   }
@@ -96,8 +98,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       setState(() {
         _keyController.text = savedKey;
       });
-      // Trigger encryption/decryption updates after key is loaded
-      _onEncodeInputChanged();
+      // Trigger decryption update after key is loaded
       _onDecodeInputChanged();
     }
   }
@@ -115,6 +116,20 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     }
   }
 
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _useBase64 = prefs.getBool('use_base64') ?? true;
+      _outputLanguage = prefs.getString('output_language') ?? 'fa';
+    });
+  }
+
+  Future<void> _saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('use_base64', _useBase64);
+    await prefs.setString('output_language', _outputLanguage);
+  }
+
   String _generateKey() {
     const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     final random = Random.secure();
@@ -128,12 +143,11 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   void _onKeyChanged() {
-    // Re-run encryption/decryption when key changes
-    _onEncodeInputChanged();
+    // Re-run decryption when key changes
     _onDecodeInputChanged();
   }
 
-  void _onEncodeInputChanged() {
+  void _performEncryption() {
     if (_keyController.text.isEmpty) {
       setState(() {
         _encodeOutput = 'لطفا ابتدا یک کلید ایجاد کنید';
@@ -210,23 +224,38 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       // Combine IV + encrypted data for transmission
       final combined = Uint8List.fromList([...iv.bytes, ...encrypted.bytes]);
       
-      // Convert to base64, then to Persian characters for easy sharing
+      if (!_useBase64) {
+        // Return as hex string when base64 is disabled
+        return combined.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+      }
+
+      // Convert to base64, then to selected language characters for easy sharing
       final base64Str = base64.encode(combined);
-      return _latinToPersian(base64Str);
+      return _encodeToLanguage(base64Str);
     } catch (e) {
       throw Exception('Encryption failed: $e');
     }
   }
 
-  String _decryptText(String encryptedPersian, String key) {
+  String _decryptText(String encryptedText, String key) {
     try {
       // Derive the same key
       final keyBytes = _deriveKey(key);
       final encryptKey = encrypt.Key(keyBytes);
       
-      // Convert Persian back to base64
-      final base64Str = _persianToLatin(encryptedPersian);
-      final combined = base64.decode(base64Str);
+      Uint8List combined;
+      if (!_useBase64) {
+        // Decode from hex string
+        if (encryptedText.length % 2 != 0) throw Exception('Invalid hex data');
+        combined = Uint8List.fromList(List.generate(
+          encryptedText.length ~/ 2,
+          (i) => int.parse(encryptedText.substring(i * 2, i * 2 + 2), radix: 16),
+        ));
+      } else {
+        // Convert language chars back to base64
+        final base64Str = _decodeFromLanguage(encryptedText);
+        combined = base64.decode(base64Str);
+      }
       
       // Extract IV (first 16 bytes) and encrypted data
       if (combined.length < 32) { // Minimum: 16 bytes IV + 16 bytes GCM tag
@@ -242,8 +271,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       );
       
       // Decrypt
-      final encrypted = encrypt.Encrypted(encryptedBytes);
-      final decrypted = encrypter.decrypt(encrypted, iv: iv);
+      final encryptedObj = encrypt.Encrypted(encryptedBytes);
+      final decrypted = encrypter.decrypt(encryptedObj, iv: iv);
       
       return decrypted;
     } catch (e) {
@@ -286,9 +315,102 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     '+': 'ا', '/': 'ت', '=': 'چ',
   };
 
+  // Korean character map (Hangul syllables, one per base64 char)
+  final Map<String, String> _latinToKoreanMap = {
+    'A': '가', 'B': '나', 'C': '다', 'D': '라', 'E': '마', 'F': '바', 'G': '사', 'H': '아',
+    'I': '자', 'J': '차', 'K': '카', 'L': '타', 'M': '파', 'N': '하', 'O': '갈', 'P': '날',
+    'Q': '달', 'R': '랄', 'S': '말', 'T': '발', 'U': '살', 'V': '알', 'W': '잘', 'X': '찰',
+    'Y': '칼', 'Z': '탈',
+    'a': '팔', 'b': '할', 'c': '감', 'd': '남', 'e': '담', 'f': '람', 'g': '맘', 'h': '밤',
+    'i': '삼', 'j': '암', 'k': '잠', 'l': '참', 'm': '캄', 'n': '탐', 'o': '팜', 'p': '함',
+    'q': '강', 'r': '낭', 's': '당', 't': '랑', 'u': '망', 'v': '방', 'w': '상', 'x': '앙',
+    'y': '장', 'z': '창',
+    '0': '캉', '1': '탕', '2': '팡', '3': '항', '4': '개', '5': '내', '6': '대', '7': '래',
+    '8': '매', '9': '배',
+    '+': '새', '/': '애', '=': '재',
+  };
+
+  // Chinese character map (common CJK characters, one per base64 char)
+  final Map<String, String> _latinToChineseMap = {
+    'A': '的', 'B': '一', 'C': '是', 'D': '不', 'E': '了', 'F': '人', 'G': '我', 'H': '在',
+    'I': '有', 'J': '他', 'K': '这', 'L': '中', 'M': '大', 'N': '来', 'O': '上', 'P': '国',
+    'Q': '个', 'R': '到', 'S': '说', 'T': '们', 'U': '为', 'V': '子', 'W': '和', 'X': '你',
+    'Y': '地', 'Z': '出',
+    'a': '道', 'b': '也', 'c': '时', 'd': '年', 'e': '得', 'f': '就', 'g': '那', 'h': '要',
+    'i': '下', 'j': '以', 'k': '生', 'l': '会', 'm': '可', 'n': '自', 'o': '着', 'p': '去',
+    'q': '之', 'r': '过', 's': '家', 't': '学', 'u': '对', 'v': '里', 'w': '后', 'x': '行',
+    'y': '多', 'z': '法',
+    '0': '所', '1': '发', '2': '事', '3': '前', '4': '本', '5': '见', '6': '经', '7': '想',
+    '8': '当', '9': '二',
+    '+': '三', '/': '做', '=': '又',
+  };
+
+  // Russian character map (Cyrillic, one per base64 char)
+  final Map<String, String> _latinToRussianMap = {
+    'A': 'А', 'B': 'Б', 'C': 'В', 'D': 'Г', 'E': 'Д', 'F': 'Е', 'G': 'Ё', 'H': 'Ж',
+    'I': 'З', 'J': 'И', 'K': 'Й', 'L': 'К', 'M': 'Л', 'N': 'М', 'O': 'Н', 'P': 'О',
+    'Q': 'П', 'R': 'Р', 'S': 'С', 'T': 'Т', 'U': 'У', 'V': 'Ф', 'W': 'Х', 'X': 'Ц',
+    'Y': 'Ч', 'Z': 'Ш',
+    'a': 'Щ', 'b': 'Ъ', 'c': 'Ы', 'd': 'Ь', 'e': 'Э', 'f': 'Ю', 'g': 'Я', 'h': 'а',
+    'i': 'б', 'j': 'в', 'k': 'г', 'l': 'д', 'm': 'е', 'n': 'ё', 'o': 'ж', 'p': 'з',
+    'q': 'и', 'r': 'й', 's': 'к', 't': 'л', 'u': 'м', 'v': 'н', 'w': 'о', 'x': 'п',
+    'y': 'р', 'z': 'с',
+    '0': 'т', '1': 'у', '2': 'ф', '3': 'х', '4': 'ц', '5': 'ч', '6': 'ш', '7': 'щ',
+    '8': 'ъ', '9': 'ы',
+    '+': 'ь', '/': 'э', '=': 'ю',
+  };
+
   late final Map<String, String> _persianToLatinMap = {
     for (var entry in _latinToPersianMap.entries) entry.value: entry.key,
   };
+
+  late final Map<String, String> _koreanToLatinMap = {
+    for (var entry in _latinToKoreanMap.entries) entry.value: entry.key,
+  };
+
+  late final Map<String, String> _chineseToLatinMap = {
+    for (var entry in _latinToChineseMap.entries) entry.value: entry.key,
+  };
+
+  late final Map<String, String> _russianToLatinMap = {
+    for (var entry in _latinToRussianMap.entries) entry.value: entry.key,
+  };
+
+  String _encodeToLanguage(String base64Str) {
+    switch (_outputLanguage) {
+      case 'fa': return _latinToPersian(base64Str);
+      case 'ko': return _mapChars(base64Str, _latinToKoreanMap);
+      case 'zh': return _mapChars(base64Str, _latinToChineseMap);
+      case 'ru': return _mapChars(base64Str, _latinToRussianMap);
+      default: return base64Str; // 'en': keep as base64
+    }
+  }
+
+  String _decodeFromLanguage(String encodedStr) {
+    switch (_outputLanguage) {
+      case 'fa': return _persianToLatin(encodedStr);
+      case 'ko': return _reverseMapChars(encodedStr, _koreanToLatinMap);
+      case 'zh': return _reverseMapChars(encodedStr, _chineseToLatinMap);
+      case 'ru': return _reverseMapChars(encodedStr, _russianToLatinMap);
+      default: return encodedStr; // 'en': keep as base64
+    }
+  }
+
+  String _mapChars(String input, Map<String, String> map) {
+    final result = StringBuffer();
+    for (var i = 0; i < input.length; i++) {
+      result.write(map[input[i]] ?? input[i]);
+    }
+    return result.toString();
+  }
+
+  String _reverseMapChars(String input, Map<String, String> reverseMap) {
+    final result = StringBuffer();
+    for (var i = 0; i < input.length; i++) {
+      result.write(reverseMap[input[i]] ?? input[i]);
+    }
+    return result.toString();
+  }
 
   String _latinToPersian(String latin) {
     final result = StringBuffer();
@@ -370,6 +492,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                       Tab(text: 'رمزنگاری'),
                       Tab(text: 'رمزگشایی'),
                       Tab(text: 'کلید'),
+                      Tab(text: 'تنظیمات'),
                     ],
                   ),
                 ),
@@ -380,6 +503,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                       _buildEncodeTab(),
                       _buildDecodeTab(),
                       _buildKeyTab(),
+                      _buildSettingsTab(),
                     ],
                   ),
                 ),
@@ -406,6 +530,19 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
               ),
               maxLines: 6,
               style: const TextStyle(color: Colors.white),
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton(
+              onPressed: _performEncryption,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1a1a1a),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              child: const Text('رمزنگاری', style: TextStyle(fontSize: 16)),
             ),
             const SizedBox(height: 16),
             Container(
@@ -590,6 +727,104 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                 ),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSettingsTab() {
+    final languages = [
+      ('fa', 'فارسی'),
+      ('en', 'انگلیسی'),
+      ('ko', 'کره‌ای'),
+      ('zh', 'چینی'),
+      ('ru', 'روسی'),
+    ];
+
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'تنظیمات',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1c1c1c),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: const Color(0xFF333333)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'استفاده از Base64',
+                    style: TextStyle(color: Colors.white, fontSize: 16),
+                  ),
+                  Switch(
+                    value: _useBase64,
+                    onChanged: (value) {
+                      setState(() {
+                        _useBase64 = value;
+                      });
+                      _saveSettings();
+                    },
+                    activeColor: Colors.white,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'زبان خروجی',
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF1c1c1c),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: const Color(0xFF333333)),
+              ),
+              child: Column(
+                children: languages.map((lang) {
+                  return RadioListTile<String>(
+                    title: Text(lang.$2, style: const TextStyle(color: Colors.white)),
+                    value: lang.$1,
+                    groupValue: _outputLanguage,
+                    onChanged: _useBase64
+                        ? (value) {
+                            if (value != null) {
+                              setState(() {
+                                _outputLanguage = value;
+                              });
+                              _saveSettings();
+                            }
+                          }
+                        : null,
+                    activeColor: Colors.white,
+                  );
+                }).toList(),
+              ),
+            ),
+            if (!_useBase64)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'انتخاب زبان خروجی فقط هنگام فعال بودن Base64 امکان‌پذیر است',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ),
           ],
         ),
       ),
