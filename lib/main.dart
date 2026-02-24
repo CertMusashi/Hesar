@@ -657,7 +657,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   Widget _buildSettingsTab() {
     final languages = [
       ('fa', 'فارسی'),
-      ('en', 'انگلیسی (هگز)'),
+      ('en', 'انگلیسی'),
       ('ko', 'کره‌ای'),
       ('zh', 'چینی'),
       ('ru', 'روسی'),
